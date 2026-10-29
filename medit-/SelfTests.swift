@@ -531,6 +531,21 @@ func runSelfTests() {
             view.cacheDisplay(in: view.bounds, to: bitmap)
             try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "/tmp/nex-main-sidebar-preview.png"))
         }
+        parentSidebar.activateNode(nestedFolder)
+        check(controller.workspace == browserChild.path && parentSidebar.root?.url.path == browserChild.path, "Double-click folder action enters the folder as the sidebar root")
+        parentSidebar.parentButton.performClick(nil)
+        let downFolder = parentSidebar.node(at: browserChild.path)!
+        parentSidebar.outline.selectRowIndexes(IndexSet(integer: parentSidebar.outline.row(forItem: downFolder)), byExtendingSelection: false)
+        check(parentSidebar.childButton.isEnabled, "Down arrow enables for a selected subfolder")
+        parentSidebar.childButton.performClick(nil)
+        check(controller.workspace == browserChild.path, "Down arrow enters the selected subfolder")
+        parentSidebar.outline.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        check(!parentSidebar.childButton.isEnabled, "Down arrow is disabled for the current root folder")
+        let selectedLeaf = parentSidebar.node(at: browserChild.appendingPathComponent("nested.txt").path)!
+        parentSidebar.outline.selectRowIndexes(IndexSet(integer: parentSidebar.outline.row(forItem: selectedLeaf)), byExtendingSelection: false)
+        check(!parentSidebar.childButton.isEnabled, "Down arrow is disabled for a selected file")
+        parentSidebar.activateNode(selectedLeaf)
+        check(controller.documents[controller.activeIndex].path == selectedLeaf.url.path, "Double-click file action still opens the file")
         parentSidebar.setFolder("/", state: nil)
         check(!parentSidebar.parentButton.isEnabled, "Main editor sidebar Up is disabled at filesystem root")
         parentSidebar.setFolder(nil, state: nil)

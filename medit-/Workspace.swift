@@ -126,6 +126,7 @@ final class FolderTitleField: NSTextField {
 final class FolderSidebarController: NSViewController, NSOutlineViewDataSource, NSOutlineViewDelegate {
     let outline = SidebarOutlineView()
     let parentButton = NSButton()
+    let childButton = NSButton()
     let gitStatus = GitStatusMonitor()
     let folderTitle = FolderTitleField(labelWithString: "Folder")
     let message = NSTextField(wrappingLabelWithString: "Choose Open… to open a folder")
@@ -136,6 +137,7 @@ final class FolderSidebarController: NSViewController, NSOutlineViewDataSource, 
     var onHide: (() -> Void)?
     var onCloseFolder: (() -> Void)?
     var onOpenParent: ((URL) -> Void)?
+    var onOpenFolder: ((URL) -> Void)?
     var interfaceFont = NSFont.systemFont(ofSize: 17) { didSet { if isViewLoaded { let saved = state(width: 240, hidden: false); folderTitle.font = interfaceFont; message.font = interfaceFont; outline.rowHeight = max(26, interfaceFont.pointSize + 10); setFolder(root?.url.path, state: saved) } } }
     private var refreshing = false
     override func loadView() {
@@ -143,6 +145,9 @@ final class FolderSidebarController: NSViewController, NSOutlineViewDataSource, 
         parentButton.image = NSImage(systemSymbolName: "arrow.up", accessibilityDescription: "Open parent folder")
         parentButton.isBordered = false; parentButton.target = self; parentButton.action = #selector(openParentFolder)
         parentButton.toolTip = "Open parent folder"; parentButton.setAccessibilityLabel("Open parent folder")
+        childButton.image = NSImage(systemSymbolName: "arrow.down", accessibilityDescription: "Enter selected folder")
+        childButton.isBordered = false; childButton.target = self; childButton.action = #selector(openSelectedFolder)
+        childButton.toolTip = "Enter selected folder"; childButton.setAccessibilityLabel("Enter selected folder")
         let refresh = NSButton(image: NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Refresh folder")!, target: self, action: #selector(refreshTree))
         refresh.isBordered = false; refresh.toolTip = "Refresh folder"
         let hide = NSButton(title: "×", target: self, action: #selector(hideSidebar))
@@ -170,9 +175,10 @@ final class FolderSidebarController: NSViewController, NSOutlineViewDataSource, 
         outline.rowHeight = 27; outline.indentationPerLevel = 15; outline.backgroundColor = EditorPalette.workspaceSidebar
         outline.selectionHighlightStyle = .regular; outline.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
         let scroll = NSScrollView(); scroll.documentView = outline; scroll.hasVerticalScroller = true; scroll.hasHorizontalScroller = false; scroll.autohidesScrollers = true; scroll.backgroundColor = EditorPalette.workspaceSidebar
-        [folderTitle, parentButton, refresh, hide, scroll, message].forEach { host.addSubview($0); $0.translatesAutoresizingMaskIntoConstraints = false }
+        [folderTitle, parentButton, childButton, refresh, hide, scroll, message].forEach { host.addSubview($0); $0.translatesAutoresizingMaskIntoConstraints = false }
         NSLayoutConstraint.activate([
-            folderTitle.leadingAnchor.constraint(equalTo: parentButton.trailingAnchor, constant: 8), folderTitle.topAnchor.constraint(equalTo: host.topAnchor, constant: 12), folderTitle.trailingAnchor.constraint(equalTo: refresh.leadingAnchor, constant: -8),
+            folderTitle.leadingAnchor.constraint(equalTo: childButton.trailingAnchor, constant: 8), folderTitle.topAnchor.constraint(equalTo: host.topAnchor, constant: 12), folderTitle.trailingAnchor.constraint(equalTo: refresh.leadingAnchor, constant: -8),
+            childButton.leadingAnchor.constraint(equalTo: parentButton.trailingAnchor, constant: 2), childButton.centerYAnchor.constraint(equalTo: folderTitle.centerYAnchor), childButton.widthAnchor.constraint(equalToConstant: 24),
             parentButton.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 8), parentButton.centerYAnchor.constraint(equalTo: folderTitle.centerYAnchor), parentButton.widthAnchor.constraint(equalToConstant: 24),
             refresh.trailingAnchor.constraint(equalTo: hide.leadingAnchor, constant: -4), hide.trailingAnchor.constraint(equalTo: host.trailingAnchor, constant: -10), hide.centerYAnchor.constraint(equalTo: refresh.centerYAnchor), hide.widthAnchor.constraint(equalToConstant: 24), refresh.centerYAnchor.constraint(equalTo: folderTitle.centerYAnchor), refresh.widthAnchor.constraint(equalToConstant: 24),
             scroll.topAnchor.constraint(equalTo: folderTitle.bottomAnchor, constant: 12), scroll.leadingAnchor.constraint(equalTo: host.leadingAnchor), scroll.trailingAnchor.constraint(equalTo: host.trailingAnchor), scroll.bottomAnchor.constraint(equalTo: message.topAnchor, constant: -8),
@@ -220,6 +226,7 @@ final class FolderSidebarController: NSViewController, NSOutlineViewDataSource, 
         }
         if let y = state?.scrollY { outline.scroll(NSPoint(x: 0, y: max(0, y))) }
         refreshing = false
+        updateChildButton()
         updateGitPreference()
     }
     func node(at path: String) -> FolderNode? {
@@ -283,9 +290,22 @@ final class FolderSidebarController: NSViewController, NSOutlineViewDataSource, 
     @objc func deleteSidebarFile(_ sender: NSMenuItem) { if let url = sender.representedObject as? URL { onDeleteFile?(url) } }
     @objc func openDoubleClickedFile() {
         guard let node = outline.item(atRow: outline.clickedRow) as? FolderNode else { return }
-        if node.directory { if outline.isItemExpanded(node) { outline.collapseItem(node) } else { outline.expandItem(node) } }
+        activateNode(node)
+    }
+    func activateNode(_ node: FolderNode) {
+        if node.directory { onOpenFolder?(node.url) }
         else { onOpenFile?(node.url) }
     }
+    @objc func openSelectedFolder() {
+        guard let node = outline.item(atRow: outline.selectedRow) as? FolderNode,
+              node.directory, node.url.path != root?.url.path else { return }
+        onOpenFolder?(node.url)
+    }
+    private func updateChildButton() {
+        let node = outline.item(atRow: outline.selectedRow) as? FolderNode
+        childButton.isEnabled = node?.directory == true && node?.url.path != root?.url.path
+    }
+    func outlineViewSelectionDidChange(_ notification: Notification) { updateChildButton() }
 }
 
 extension AppDelegate {

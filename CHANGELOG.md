@@ -1,5 +1,7 @@
 # nex-editm - 0.3
 
+- 2026-10-29T16:35:18Z — Changed: Double-clicking a sidebar folder enters it; disclosure arrows still expand contents. Added a Down arrow beside Up to enter a selected subfolder.
+
 - 2026-10-29T16:30:55Z — Changed: Placed the main sidebar Up arrow before the folder name on the left; Refresh and Close remain on the right.
 
 - 2026-10-29T16:29:45Z — Added: Parent-folder Up arrow beside Refresh in the main editor sidebar, opening the parent folder with its files and expandable subfolders.
