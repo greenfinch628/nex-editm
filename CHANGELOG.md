@@ -1,5 +1,7 @@
 # nex-editm - 0.3
 
+- 2026-10-29T16:39:51Z — Fixed: Folder navigation and closing a folder preserve the current window position and size instead of restoring a folder-specific frame; startup still restores saved window geometry.
+
 - 2026-10-29T16:35:18Z — Changed: Double-clicking a sidebar folder enters it; disclosure arrows still expand contents. Added a Down arrow beside Up to enter a selected subfolder.
 
 - 2026-10-29T16:30:55Z — Changed: Placed the main sidebar Up arrow before the folder name on the left; Refresh and Close remain on the right.

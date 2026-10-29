@@ -546,6 +546,24 @@ func runSelfTests() {
         check(!parentSidebar.childButton.isEnabled, "Down arrow is disabled for a selected file")
         parentSidebar.activateNode(selectedLeaf)
         check(controller.documents[controller.activeIndex].path == selectedLeaf.url.path, "Double-click file action still opens the file")
+        let navigationFrame = controller.window.frame
+        var parentPosition = try controller.folderStore.load(browserRoot.path)!
+        parentPosition.windowFrame = NSStringFromRect(navigationFrame.offsetBy(dx: 70, dy: 40))
+        try controller.folderStore.save(parentPosition)
+        parentSidebar.parentButton.performClick(nil)
+        check(controller.workspace == browserRoot.path && controller.window.frame == navigationFrame, "Up navigation ignores the parent folder's saved window position")
+        var childPosition = try controller.folderStore.load(browserChild.path)!
+        var changedFrame = navigationFrame.offsetBy(dx: -50, dy: -30)
+        changedFrame.size.width += 100
+        childPosition.windowFrame = NSStringFromRect(changedFrame)
+        try controller.folderStore.save(childPosition)
+        parentSidebar.activateNode(parentSidebar.node(at: browserChild.path)!)
+        check(controller.workspace == browserChild.path && controller.window.frame == navigationFrame, "Double-click navigation preserves window position and size despite a different saved frame")
+        var loosePosition = try controller.folderStore.load(nil) ?? EditorSession(documents: [], activeIndex: 0)
+        loosePosition.windowFrame = NSStringFromRect(changedFrame)
+        try controller.folderStore.save(loosePosition)
+        controller.closeFolder()
+        check(controller.workspace == nil && controller.window.frame == navigationFrame, "Closing a folder also preserves the current window position and size")
         parentSidebar.setFolder("/", state: nil)
         check(!parentSidebar.parentButton.isEnabled, "Main editor sidebar Up is disabled at filesystem root")
         parentSidebar.setFolder(nil, state: nil)

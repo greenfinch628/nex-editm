@@ -325,7 +325,7 @@ extension AppDelegate {
         let snapshot = sessionSnapshot()
         try folderStore.save(snapshot); try store.save(snapshot)
     }
-    func applySession(_ session: EditorSession) {
+    func applySession(_ session: EditorSession, restoreWindowFrame: Bool = true) {
         loading = true
         let restoredActiveID = session.documents.indices.contains(session.activeIndex) ? session.documents[session.activeIndex].id : nil
         documents = session.documents.filter { $0.pinned == true } + session.documents.filter { $0.pinned != true }
@@ -339,7 +339,7 @@ extension AppDelegate {
             }
         }
         if documents.isEmpty { documents = [EditorDocument(title: "Untitled Document 1")] }
-        if let frame = session.windowFrame {
+        if restoreWindowFrame, let frame = session.windowFrame {
             var rect = NSRectFromString(frame)
             if rect.width.isFinite, rect.height.isFinite, rect.origin.x.isFinite, rect.origin.y.isFinite, rect.width >= 640, rect.height >= 400, let screen = NSScreen.main?.visibleFrame {
                 rect.size.width = min(rect.width, screen.width); rect.size.height = min(rect.height, screen.height)
@@ -385,7 +385,7 @@ extension AppDelegate {
             var session = restored ?? EditorSession(documents: [], activeIndex: 0, workspace: url.path)
             session.sidebar = session.sidebar ?? SidebarState()
             session.sidebar?.hidden = false
-            applySession(session)
+            applySession(session, restoreWindowFrame: false)
             rememberRecent(url, folder: true); persistSession()
         } catch { report(error) }
     }
@@ -394,7 +394,7 @@ extension AppDelegate {
         do {
             let loose = try folderStore.load(nil) ?? EditorSession(documents: [], activeIndex: 0)
             try saveCurrentSessionBeforeSwitch()
-            applySession(loose)
+            applySession(loose, restoreWindowFrame: false)
             sidebarItem.isCollapsed = false
             workspaceSplit.applyPaneState()
             window.contentView?.layoutSubtreeIfNeeded()
