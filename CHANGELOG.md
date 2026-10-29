@@ -1,5 +1,7 @@
 # nex-editm - 0.3
 
+- 2026-10-29T16:30:55Z — Changed: Placed the main sidebar Up arrow before the folder name on the left; Refresh and Close remain on the right.
+
 - 2026-10-29T16:29:45Z — Added: Parent-folder Up arrow beside Refresh in the main editor sidebar, opening the parent folder with its files and expandable subfolders.
 
 - 2026-10-29T16:18:50Z — Added: Up arrow in the Open sidebar to browse the parent directory as a tree containing files and expandable subfolders. Sidebar files can be selected or opened directly.

@@ -526,6 +526,11 @@ func runSelfTests() {
         parentSidebar.outline.expandItem(nestedFolder)
         let nestedFile = parentSidebar.node(at: browserChild.appendingPathComponent("nested.txt").path)!
         check(parentSidebar.outline.row(forItem: nestedFile) >= 0, "Main editor parent sidebar expands subfolders to show their files")
+        controller.window.contentView?.layoutSubtreeIfNeeded()
+        if let view = controller.window.contentView, let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+            view.cacheDisplay(in: view.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "/tmp/nex-main-sidebar-preview.png"))
+        }
         parentSidebar.setFolder("/", state: nil)
         check(!parentSidebar.parentButton.isEnabled, "Main editor sidebar Up is disabled at filesystem root")
         parentSidebar.setFolder(nil, state: nil)
