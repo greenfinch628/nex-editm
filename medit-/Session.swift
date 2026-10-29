@@ -194,20 +194,12 @@ extension AppDelegate {
         loadActiveDocument(); persistSession()
     }
     @objc func openDocuments() {
-        let panel = NSOpenPanel(); panel.allowsMultipleSelection = true; panel.canChooseDirectories = true; panel.canCreateDirectories = true
-        if let workspace { panel.directoryURL = URL(fileURLWithPath: workspace) }
-        if panel.runModal() == .OK { for url in panel.urls { openFile(url) } }
+        let browser = OpenBrowserController(directory: workspace.map { URL(fileURLWithPath: $0) } ?? FileManager.default.homeDirectoryForCurrentUser)
+        for url in browser.run() { openFile(url) }
     }
     @objc func newFolder() {
-        let panel = NSSavePanel()
-        panel.title = "New Folder"; panel.prompt = "Create"; panel.nameFieldLabel = "Folder name:"
-        panel.nameFieldStringValue = "Untitled Folder"; panel.canCreateDirectories = true
-        if let workspace { panel.directoryURL = URL(fileURLWithPath: workspace) }
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        do {
-            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
-            openFolder(url)
-        } catch { report(error) }
+        let browser = OpenBrowserController(directory: workspace.map { URL(fileURLWithPath: $0) } ?? FileManager.default.homeDirectoryForCurrentUser)
+        for url in browser.run(createFolder: true) { openFile(url) }
     }
     func openFile(_ suppliedURL: URL) {
         let url = suppliedURL.workspaceNormalizedURL

@@ -451,6 +451,53 @@ func runSelfTests() {
         check(indexBefore == indexAfter, "Git status never writes the repository index")
         UserDefaults.standard.set(oldGitPreference, forKey: "showGitStatus")
         controller.gitTimer?.invalidate()
+        let browserRoot = folder.appendingPathComponent("browser-tests").workspaceNormalizedURL
+        try FileManager.default.createDirectory(at: browserRoot, withIntermediateDirectories: false)
+        let browserChild = browserRoot.appendingPathComponent("Child")
+        try FileManager.default.createDirectory(at: browserChild, withIntermediateDirectories: false)
+        try "file".write(to: browserRoot.appendingPathComponent("sample.txt"), atomically: true, encoding: .utf8)
+        try "hidden".write(to: browserRoot.appendingPathComponent(".hidden"), atomically: true, encoding: .utf8)
+        let navigation = OpenBrowserModel(directory: browserRoot)
+        try navigation.navigate(browserRoot)
+        check(navigation.entries.map(\.lastPathComponent) == ["Child", "sample.txt"], "Open browser sorts folders first and hides dotfiles")
+        try navigation.navigate(browserChild); try navigation.step(-1)
+        check(navigation.directory.path == browserRoot.path && navigation.historyIndex == 0, "Open browser Back restores previous directory")
+        try navigation.step(1)
+        check(navigation.directory.path == browserChild.path, "Open browser Forward restores next directory")
+        try navigation.step(-1)
+        let created = try navigation.createFolder("New Folder")
+        check(FileManager.default.fileExists(atPath: created.path) && navigation.entries.contains { $0.path == created.path }, "Open browser creates folders and refreshes the file list")
+        do { _ = try navigation.createFolder("New Folder"); check(false, "Duplicate folder rejected") } catch { check(true, "Open browser rejects existing folder names") }
+        do { _ = try navigation.createFolder("../escape"); check(false, "Invalid folder rejected") } catch { check(true, "Open browser rejects names outside the current folder") }
+        navigation.showsHidden = true; try navigation.navigate(browserRoot)
+        check(navigation.entries.contains { $0.lastPathComponent == ".hidden" }, "Open browser can show hidden files")
+        try navigation.navigate(created)
+        check(navigation.history.last?.path == created.path && navigation.history.count == 2, "New navigation discards stale Forward history")
+        do { try navigation.navigate(browserRoot.appendingPathComponent("missing")); check(false, "Missing directory rejected") } catch { check(navigation.directory.path == created.path, "Failed navigation preserves the current directory") }
+        let linkedFolder = browserRoot.appendingPathComponent("Linked Child")
+        try FileManager.default.createSymbolicLink(at: linkedFolder, withDestinationURL: browserChild)
+        check(OpenBrowserModel.isFolder(linkedFolder), "Open browser recognizes folder symbolic links")
+        try navigation.navigate(linkedFolder)
+        check(navigation.directory.path == browserChild.path, "Open browser can navigate into linked folders")
+        let browser = OpenBrowserController(directory: FileManager.default.homeDirectoryForCurrentUser)
+        browser.window?.makeKeyAndOrderFront(nil)
+        browser.window?.contentView?.layoutSubtreeIfNeeded()
+        check(browser.files.numberOfRows == browser.model.entries.count && browser.tree.numberOfRows > 2, "Open window presents files and expanded Home navigation")
+        if let view = browser.window?.contentView, let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+            view.cacheDisplay(in: view.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "/tmp/nex-open-browser-preview.png"))
+        }
+        browser.window?.orderOut(nil)
+        browser.navigate(browserRoot)
+        DispatchQueue.main.async { browser.accept() }
+        let openedFolder = browser.run()
+        check(openedFolder.map(\.path) == [browserRoot.path], "Open with no selection chooses the current folder")
+        let selectedFile = browser.model.entries.firstIndex { $0.lastPathComponent == "sample.txt" }!
+        browser.files.selectRowIndexes(IndexSet(integer: selectedFile), byExtendingSelection: false)
+        DispatchQueue.main.async { browser.accept() }
+        check(browser.run().map(\.lastPathComponent) == ["sample.txt"], "Open returns the selected file")
+        DispatchQueue.main.async { browser.cancel() }
+        check(browser.run().isEmpty, "Cancel returns no files or folders")
         let iconURL = Bundle.main.url(forResource: "AppIcon", withExtension: "icns")
         check(iconURL.flatMap { NSImage(contentsOf: $0) }?.isValid == true, "Packaged application icon decodes correctly")
         print("\(checks) checks passed")

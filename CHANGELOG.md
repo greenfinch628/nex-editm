@@ -1,5 +1,7 @@
 # nex-editm - 0.3
 
+- 2026-10-29T16:05:41Z — Added: Folders-style Open window with expandable navigation, striped file details, history, parent navigation, clickable path, hidden files, Go to Folder, and folder creation.
+
 - 2026-10-29T15:46:36Z — Fixed: Always offer to save modified tabs before closing, including unnamed tabs; cancelled or failed saves keep the tab open.
 - 2026-10-29T15:46:36Z — Added: Folder creation in the Open dialog and a New Folder menu action that opens the created folder in the sidebar.
 - 2026-10-29T15:46:36Z — Changed: Removed the redundant arrow beside Open.

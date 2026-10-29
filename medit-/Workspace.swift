@@ -538,3 +538,266 @@ final class GitStatusMonitor {
         }
     }
 }
+
+// Folder navigation shared by the custom Open window and its regression tests.
+final class OpenBrowserModel {
+    private(set) var directory: URL
+    private(set) var entries: [URL] = []
+    private(set) var history: [URL] = []
+    private(set) var historyIndex = -1
+    var showsHidden = false
+    init(directory: URL) { self.directory = directory }
+    func navigate(_ url: URL, record: Bool = true) throws {
+        let folder = url.resolvingSymlinksInPath().workspaceNormalizedURL
+        let values = try folder.resolvingSymlinksInPath().resourceValues(forKeys: [.isDirectoryKey])
+        guard values.isDirectory == true else { throw CocoaError(.fileReadUnsupportedScheme) }
+        let contents = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.isDirectoryKey, .isPackageKey, .contentModificationDateKey, .fileSizeKey, .localizedTypeDescriptionKey], options: showsHidden ? [] : [.skipsHiddenFiles])
+        entries = contents.sorted {
+            let a = Self.isFolder($0), b = Self.isFolder($1)
+            return a != b ? a : $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending
+        }
+        directory = folder
+        if record && (historyIndex < 0 || history[historyIndex].path != folder.path) {
+            history = Array(history.prefix(historyIndex + 1)); history.append(folder); historyIndex = history.count - 1
+        }
+    }
+    static func isFolder(_ url: URL) -> Bool {
+        let v = try? url.resolvingSymlinksInPath().resourceValues(forKeys: [.isDirectoryKey, .isPackageKey])
+        return v?.isDirectory == true && v?.isPackage != true
+    }
+    func step(_ offset: Int) throws {
+        let next = historyIndex + offset
+        guard history.indices.contains(next) else { return }
+        try navigate(history[next], record: false); historyIndex = next
+    }
+    @discardableResult func createFolder(_ name: String) throws -> URL {
+        guard !name.isEmpty, name != ".", name != "..", !name.contains("/"), !name.contains(":"), !name.contains("\0") else { throw CocoaError(.fileWriteInvalidFileName) }
+        let url = directory.appendingPathComponent(name, isDirectory: true)
+        guard !FileManager.default.fileExists(atPath: url.path) else { throw CocoaError(.fileWriteFileExists) }
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
+        try navigate(directory, record: false)
+        return url
+    }
+}
+
+final class OpenBrowserNode: NSObject {
+    let url: URL
+    let title: String
+    var children: [OpenBrowserNode]?
+    init(_ url: URL, title: String? = nil) { self.url = url; self.title = title ?? url.lastPathComponent }
+    func folders() -> [OpenBrowserNode] {
+        if let children { return children }
+        let urls = (try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey], options: [.skipsHiddenFiles])) ?? []
+        // Symlink destinations can be visited, but are not expanded recursively.
+        let result = urls.filter { OpenBrowserModel.isFolder($0) }.sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }.map { OpenBrowserNode($0) }
+        children = result; return result
+    }
+}
+
+final class OpenBrowserController: NSWindowController, NSWindowDelegate, NSOutlineViewDataSource, NSOutlineViewDelegate, NSTableViewDataSource, NSTableViewDelegate {
+    let model: OpenBrowserModel
+    let tree = NSOutlineView()
+    let files = NSTableView()
+    let path = NSPathControl()
+    let location = NSTextField(labelWithString: "Home")
+    let back = NSButton(), forward = NSButton(), up = NSButton()
+    let openButton = NSButton(title: "Open", target: nil, action: nil)
+    var result: [URL] = []
+    private var roots: [OpenBrowserNode] = []
+    private var syncingTree = false
+    private let sidebarColor = NSColor(calibratedRed: 0.91, green: 0.95, blue: 0.97, alpha: 1)
+    init(directory: URL) {
+        model = OpenBrowserModel(directory: directory)
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 1020, height: 680), styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        super.init(window: panel)
+        panel.title = "Open — nex-editm"; panel.minSize = NSSize(width: 760, height: 460); panel.delegate = self
+        panel.appearance = NSAppearance(named: .aqua)
+        buildUI()
+        do { try model.navigate(directory) } catch {
+            do { try model.navigate(FileManager.default.homeDirectoryForCurrentUser) } catch { showError(error) }
+        }
+        refresh()
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    func run(createFolder: Bool = false) -> [URL] {
+        guard let window else { return [] }
+        result = []
+        window.center(); window.makeKeyAndOrderFront(nil)
+        if createFolder { DispatchQueue.main.async { [weak self] in self?.newFolder() } }
+        NSApp.runModal(for: window); window.orderOut(nil)
+        return result
+    }
+    private func symbolButton(_ button: NSButton, _ symbol: String, _ label: String, _ action: Selector) {
+        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
+        button.bezelStyle = .texturedRounded; button.target = self; button.action = action
+        button.toolTip = label; button.setAccessibilityLabel(label)
+    }
+    private func buildUI() {
+        guard let host = window?.contentView else { return }
+        host.wantsLayer = true; host.layer?.backgroundColor = NSColor(calibratedWhite: 0.97, alpha: 1).cgColor
+        let split = NSSplitView(); split.isVertical = true; split.dividerStyle = .thin
+        let sidebar = NSView(); sidebar.wantsLayer = true; sidebar.layer?.backgroundColor = sidebarColor.cgColor
+        let main = NSView()
+        split.addArrangedSubview(sidebar); split.addArrangedSubview(main)
+        let favorites = NSTextField(labelWithString: "★  Favorites"); favorites.textColor = .secondaryLabelColor; favorites.font = .systemFont(ofSize: 13, weight: .semibold)
+        let column = NSTableColumn(identifier: .init("folder")); tree.addTableColumn(column); tree.outlineTableColumn = column
+        tree.headerView = nil; tree.dataSource = self; tree.delegate = self; tree.rowHeight = 26; tree.indentationPerLevel = 15
+        tree.backgroundColor = sidebarColor; tree.selectionHighlightStyle = .regular; tree.style = .plain
+        tree.setAccessibilityLabel("Folder navigation")
+        let treeScroll = NSScrollView(); treeScroll.documentView = tree; treeScroll.hasVerticalScroller = true; treeScroll.autohidesScrollers = true
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        roots = [OpenBrowserNode(home, title: "Home"), OpenBrowserNode(URL(fileURLWithPath: "/"), title: "This Mac")]
+        let cloud = home.appendingPathComponent("Library/Mobile Documents/com~apple~CloudDocs")
+        if FileManager.default.fileExists(atPath: cloud.path) { roots.append(OpenBrowserNode(cloud, title: "iCloud Drive")) }
+        let volumes = URL(fileURLWithPath: "/Volumes")
+        if let mounted = try? FileManager.default.contentsOfDirectory(at: volumes, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) {
+            roots += mounted.filter { $0.resolvingSymlinksInPath().path != "/" }.map { OpenBrowserNode($0) }
+        }
+        tree.reloadData(); tree.expandItem(roots[0])
+        symbolButton(back, "chevron.left", "Back", #selector(goBack))
+        symbolButton(forward, "chevron.right", "Forward", #selector(goForward))
+        symbolButton(up, "arrow.up", "Enclosing Folder", #selector(goUp))
+        let create = NSButton(title: "New Folder", target: self, action: #selector(newFolder)); create.bezelStyle = .rounded
+        create.image = NSImage(systemSymbolName: "folder.badge.plus", accessibilityDescription: nil)
+        create.imagePosition = .imageLeading; create.toolTip = "Create a new folder"; create.setAccessibilityLabel("New Folder")
+        let go = NSButton(title: "Go to Folder…", target: self, action: #selector(goToFolder)); go.bezelStyle = .rounded
+        let hidden = NSButton(checkboxWithTitle: "Hidden files", target: self, action: #selector(toggleHidden(_:)))
+        location.font = .systemFont(ofSize: 15, weight: .semibold); location.lineBreakMode = .byTruncatingMiddle
+        let toolbar = NSStackView(views: [back, forward, up, location, go, create]); toolbar.spacing = 8
+        for (id, title, width) in [("name", "Name", 340.0), ("date", "Date Modified", 165.0), ("size", "Size", 85.0), ("kind", "Kind", 140.0)] {
+            let c = NSTableColumn(identifier: .init(id)); c.title = title; c.width = width; c.minWidth = 65; files.addTableColumn(c)
+        }
+        files.dataSource = self; files.delegate = self; files.rowHeight = 25; files.usesAlternatingRowBackgroundColors = true
+        files.allowsMultipleSelection = true; files.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
+        files.target = self; files.doubleAction = #selector(activateFile); files.setAccessibilityLabel("Files and folders")
+        let fileScroll = NSScrollView(); fileScroll.documentView = files; fileScroll.hasVerticalScroller = true; fileScroll.hasHorizontalScroller = true; fileScroll.autohidesScrollers = true
+        path.pathStyle = .standard; path.target = self; path.doubleAction = #selector(choosePath); path.setAccessibilityLabel("Current folder path")
+        let cancel = NSButton(title: "Cancel", target: self, action: #selector(cancel)); cancel.bezelStyle = .rounded; cancel.keyEquivalent = "\u{1b}"
+        openButton.target = self; openButton.action = #selector(accept); openButton.bezelStyle = .rounded; openButton.keyEquivalent = "\r"
+        let bottom = NSStackView(views: [hidden, NSView(), cancel, openButton]); bottom.spacing = 12
+        func add(_ views: [NSView], to parent: NSView) { for v in views { parent.addSubview(v); v.translatesAutoresizingMaskIntoConstraints = false } }
+        add([split, bottom], to: host); add([favorites, treeScroll], to: sidebar); add([toolbar, fileScroll, path], to: main)
+        NSLayoutConstraint.activate([
+            split.leadingAnchor.constraint(equalTo: host.leadingAnchor), split.trailingAnchor.constraint(equalTo: host.trailingAnchor), split.topAnchor.constraint(equalTo: host.topAnchor), split.bottomAnchor.constraint(equalTo: bottom.topAnchor, constant: -8),
+            bottom.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 16), bottom.trailingAnchor.constraint(equalTo: host.trailingAnchor, constant: -16), bottom.bottomAnchor.constraint(equalTo: host.bottomAnchor, constant: -12), bottom.heightAnchor.constraint(equalToConstant: 32),
+            sidebar.widthAnchor.constraint(greaterThanOrEqualToConstant: 210), main.widthAnchor.constraint(greaterThanOrEqualToConstant: 500),
+            favorites.topAnchor.constraint(equalTo: sidebar.topAnchor, constant: 15), favorites.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 20),
+            treeScroll.topAnchor.constraint(equalTo: favorites.bottomAnchor, constant: 10), treeScroll.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 6), treeScroll.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: -6), treeScroll.bottomAnchor.constraint(equalTo: sidebar.bottomAnchor),
+            toolbar.topAnchor.constraint(equalTo: main.topAnchor, constant: 10), toolbar.leadingAnchor.constraint(equalTo: main.leadingAnchor, constant: 12), toolbar.trailingAnchor.constraint(equalTo: main.trailingAnchor, constant: -12), toolbar.heightAnchor.constraint(equalToConstant: 34),
+            fileScroll.topAnchor.constraint(equalTo: toolbar.bottomAnchor, constant: 12), fileScroll.leadingAnchor.constraint(equalTo: main.leadingAnchor, constant: 8), fileScroll.trailingAnchor.constraint(equalTo: main.trailingAnchor, constant: -8), fileScroll.bottomAnchor.constraint(equalTo: path.topAnchor, constant: -6),
+            path.leadingAnchor.constraint(equalTo: main.leadingAnchor, constant: 12), path.trailingAnchor.constraint(equalTo: main.trailingAnchor, constant: -12), path.bottomAnchor.constraint(equalTo: main.bottomAnchor, constant: -6), path.heightAnchor.constraint(equalToConstant: 26)
+        ])
+        host.layoutSubtreeIfNeeded(); split.setPosition(250, ofDividerAt: 0)
+    }
+    func refresh() {
+        files.reloadData(); files.deselectAll(nil)
+        location.stringValue = model.directory.path == FileManager.default.homeDirectoryForCurrentUser.path ? "Home" : (model.directory.lastPathComponent.isEmpty ? "This Mac" : model.directory.lastPathComponent)
+        path.url = model.directory
+        var ancestors: [URL] = []; var ancestor = model.directory
+        while true {
+            ancestors.insert(ancestor, at: 0)
+            if ancestor.path == "/" { break }
+            ancestor = ancestor.deletingLastPathComponent()
+        }
+        path.pathItems = ancestors.map { url in
+            let component = NSPathControl(); component.url = url
+            let item = component.pathItems.last ?? NSPathControlItem(); item.title = url.path == "/" ? "This Mac" : url.lastPathComponent
+            item.image = NSImage(systemSymbolName: url.path == "/" ? "desktopcomputer" : "folder", accessibilityDescription: nil)
+            return item
+        }
+        back.isEnabled = model.historyIndex > 0; forward.isEnabled = model.historyIndex + 1 < model.history.count
+        up.isEnabled = model.directory.path != "/"; openButton.title = "Open Folder"
+        syncingTree = true
+        if let node = findNode(model.directory) { tree.selectRowIndexes(IndexSet(integer: tree.row(forItem: node)), byExtendingSelection: false) }
+        else { tree.deselectAll(nil) }
+        syncingTree = false
+    }
+    private func findNode(_ url: URL) -> OpenBrowserNode? {
+        for root in roots where url.path == root.url.path || url.path.hasPrefix(root.url.path == "/" ? "/" : root.url.path + "/") {
+            var node = root
+            let relative = url.pathComponents.dropFirst(root.url.pathComponents.count)
+            for component in relative {
+                tree.expandItem(node)
+                guard let next = node.folders().first(where: { $0.url.lastPathComponent == component }) else { return nil }
+                node = next
+            }
+            return node
+        }
+        return nil
+    }
+    private func showError(_ error: Error) { NSAlert(error: error).runModal() }
+    func navigate(_ url: URL) { do { try model.navigate(url); refresh() } catch { showError(error) } }
+    @objc func goBack() { do { try model.step(-1); refresh() } catch { showError(error) } }
+    @objc func goForward() { do { try model.step(1); refresh() } catch { showError(error) } }
+    @objc func goUp() { navigate(model.directory.deletingLastPathComponent()) }
+    @objc func toggleHidden(_ sender: NSButton) { model.showsHidden = sender.state == .on; navigate(model.directory) }
+    @objc func choosePath() { if let url = path.clickedPathItem?.url { navigate(url) } }
+    @objc func goToFolder() {
+        let alert = NSAlert(); alert.messageText = "Go to Folder"; alert.addButton(withTitle: "Go"); alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(string: model.directory.path); field.frame = NSRect(x: 0, y: 0, width: 440, height: 24); alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        if alert.runModal() == .alertFirstButtonReturn { navigate(URL(fileURLWithPath: (field.stringValue as NSString).expandingTildeInPath)) }
+    }
+    @objc func newFolder() {
+        let alert = NSAlert(); alert.messageText = "New Folder"; alert.informativeText = "Create a folder in \(model.directory.lastPathComponent)."; alert.addButton(withTitle: "Create"); alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(string: "Untitled Folder"); field.frame = NSRect(x: 0, y: 0, width: 320, height: 24); alert.accessoryView = field; alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        do {
+            let url = try model.createFolder(field.stringValue)
+            roots.forEach { $0.children = nil }; tree.reloadData(); refresh()
+            if let index = model.entries.firstIndex(where: { $0.path == url.path }) { files.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false); files.scrollRowToVisible(index) }
+        } catch { showError(error) }
+    }
+    @objc func activateFile() {
+        let row = files.clickedRow
+        guard model.entries.indices.contains(row) else { return }
+        let url = model.entries[row]
+        if OpenBrowserModel.isFolder(url) { navigate(url) } else { finish([url]) }
+    }
+    @objc func accept() {
+        let selected = files.selectedRowIndexes.compactMap { model.entries.indices.contains($0) ? model.entries[$0] : nil }
+        finish(selected.isEmpty ? [model.directory] : selected)
+    }
+    private func finish(_ urls: [URL]) { result = urls; NSApp.stopModal(); window?.orderOut(nil) }
+    @objc func cancel() { finish([]) }
+    func windowShouldClose(_ sender: NSWindow) -> Bool { cancel(); return false }
+    func numberOfRows(in tableView: NSTableView) -> Int { model.entries.count }
+    private func folderIcon(_ symbol: String = "folder.fill") -> NSImage? {
+        NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?.withSymbolConfiguration(NSImage.SymbolConfiguration(paletteColors: [.systemCyan]))
+    }
+    private func cell(_ text: String, icon: NSImage? = nil) -> NSTableCellView {
+        let cell = NSTableCellView(); let label = NSTextField(labelWithString: text); label.font = .systemFont(ofSize: 13); label.lineBreakMode = .byTruncatingMiddle
+        cell.addSubview(label); label.translatesAutoresizingMaskIntoConstraints = false; cell.textField = label
+        var leading = cell.leadingAnchor
+        if let icon {
+            let image = NSImageView(image: icon); image.imageScaling = .scaleProportionallyDown; cell.addSubview(image); image.translatesAutoresizingMaskIntoConstraints = false; cell.imageView = image
+            NSLayoutConstraint.activate([image.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4), image.centerYAnchor.constraint(equalTo: cell.centerYAnchor), image.widthAnchor.constraint(equalToConstant: 16), image.heightAnchor.constraint(equalToConstant: 16)])
+            leading = image.trailingAnchor
+        }
+        NSLayoutConstraint.activate([label.leadingAnchor.constraint(equalTo: leading, constant: 6), label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6), label.centerYAnchor.constraint(equalTo: cell.centerYAnchor)])
+        return cell
+    }
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        let url = model.entries[row]; let v = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey, .localizedTypeDescriptionKey])
+        switch tableColumn?.identifier.rawValue {
+        case "date": return cell(v?.contentModificationDate.map { DateFormatter.localizedString(from: $0, dateStyle: .short, timeStyle: .short) } ?? "—")
+        case "size": return cell(OpenBrowserModel.isFolder(url) ? "—" : ByteCountFormatter.string(fromByteCount: Int64(v?.fileSize ?? 0), countStyle: .file))
+        case "kind": return cell(v?.localizedTypeDescription ?? "File")
+        default: return cell(url.lastPathComponent, icon: OpenBrowserModel.isFolder(url) ? folderIcon() : NSWorkspace.shared.icon(forFile: url.path))
+        }
+    }
+    func tableViewSelectionDidChange(_ notification: Notification) { openButton.title = files.selectedRowIndexes.isEmpty ? "Open Folder" : "Open" }
+    func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int { (item as? OpenBrowserNode)?.folders().count ?? roots.count }
+    func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any { (item as? OpenBrowserNode)?.folders()[index] ?? roots[index] }
+    func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
+        guard let node = item as? OpenBrowserNode else { return false }
+        return (try? node.url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true && !node.folders().isEmpty
+    }
+    func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
+        guard let node = item as? OpenBrowserNode else { return nil }
+        return cell(node.title, icon: folderIcon(node.url.path == FileManager.default.homeDirectoryForCurrentUser.path ? "house.fill" : "folder"))
+    }
+    func outlineViewSelectionDidChange(_ notification: Notification) {
+        guard !syncingTree, let node = tree.item(atRow: tree.selectedRow) as? OpenBrowserNode else { return }; navigate(node.url)
+    }
+}
