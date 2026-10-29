@@ -194,9 +194,20 @@ extension AppDelegate {
         loadActiveDocument(); persistSession()
     }
     @objc func openDocuments() {
-        let panel = NSOpenPanel(); panel.allowsMultipleSelection = true; panel.canChooseDirectories = true
+        let panel = NSOpenPanel(); panel.allowsMultipleSelection = true; panel.canChooseDirectories = true; panel.canCreateDirectories = true
         if let workspace { panel.directoryURL = URL(fileURLWithPath: workspace) }
         if panel.runModal() == .OK { for url in panel.urls { openFile(url) } }
+    }
+    @objc func newFolder() {
+        let panel = NSSavePanel()
+        panel.title = "New Folder"; panel.prompt = "Create"; panel.nameFieldLabel = "Folder name:"
+        panel.nameFieldStringValue = "Untitled Folder"; panel.canCreateDirectories = true
+        if let workspace { panel.directoryURL = URL(fileURLWithPath: workspace) }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
+            openFolder(url)
+        } catch { report(error) }
     }
     func openFile(_ suppliedURL: URL) {
         let url = suppliedURL.workspaceNormalizedURL
@@ -247,12 +258,13 @@ extension AppDelegate {
         } catch { report(error); return false }
     }
     func approveClose(_ index: Int) -> Bool {
+        guard documents.indices.contains(index) else { return false }
         captureDocument()
-        guard documents[index].dirty, UserDefaults.standard.bool(forKey: "promptOnClose") else { return true }
+        guard documents[index].dirty else { return true }
         let alert = NSAlert(); alert.messageText = "Save changes to \(documents[index].title)?"
         alert.informativeText = "Keep Recovery closes this tab and retains its contents in the recovery archive."
         alert.addButton(withTitle: "Save"); alert.addButton(withTitle: "Cancel"); alert.addButton(withTitle: "Keep Recovery")
-        let result = alert.runModal()
+        let result = chooseCloseResponse?(documents[index]) ?? alert.runModal()
         return result == .alertThirdButtonReturn || (result == .alertFirstButtonReturn && save(index: index, asNew: false))
     }
     @objc func closeActiveTab() { closeDocument(activeIndex) }
@@ -415,7 +427,6 @@ extension AppDelegate {
                 checkbox("Show Git status in sidebar", value: GitStatusMonitor.preferenceEnabled, action: #selector(changeGitStatus(_:)))
                 checkbox("Enable syntax highlighting", value: d.object(forKey: "syntaxHighlighting") as? Bool ?? true, action: #selector(changeSyntaxHighlighting(_:)))
                 stack.addArrangedSubview(NSTextField(labelWithString: "One fixed scheme; Bash uses Xcode Default Light colors."))
-                checkbox("Ask to save modified tabs when closing", value: d.bool(forKey: "promptOnClose"), action: #selector(changePrompt(_:)))
                 stack.addArrangedSubview(NSTextField(labelWithString: "Recovery copies are always kept. Bottom controls change this document."))
             } else if title == "Appearance" {
                 checkbox("Show Welcome on startup", value: d.object(forKey: "showWelcomeOnStartup") as? Bool ?? true, action: #selector(changeWelcomeStartup(_:)))
@@ -450,7 +461,6 @@ extension AppDelegate {
             controller.sidebarController.updateGitPreference()
         }
     }
-    @objc func changePrompt(_ sender: NSButton) { UserDefaults.standard.set(sender.state == .on, forKey: "promptOnClose") }
     /// Apply library colors as temporary display attributes, leaving plain-text storage intact.
     func highlight() {
         guard documents.indices.contains(activeIndex), let layout = editor.layoutManager else { return }

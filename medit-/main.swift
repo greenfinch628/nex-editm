@@ -64,6 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextViewDelegate, NS
     var store = RecoveryStore()
     var folderStore = FolderSessionStore()
     var windowClosed = false
+    var chooseCloseResponse: ((EditorDocument) -> NSApplication.ModalResponse)?
     var chooseSaveLocation: ((EditorDocument) -> URL?)?
     var additionalWindows: [AppDelegate] = []
     let syntaxHighlighter: Highlighter? = {
@@ -94,11 +95,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextViewDelegate, NS
         window.delegate = self; window.setFrameAutosaveName("MainWindow"); window.title = "nex-editm"; window.titlebarAppearsTransparent = true; window.backgroundColor = EditorPalette.titleBar; window.minSize = NSSize(width: 640, height: 400)
         let rootController = NSViewController(); let root = NSView(frame: NSRect(x: 0, y: 0, width: 1060, height: 720)); rootController.view = root; window.contentViewController = rootController
         let header = NSView(); header.wantsLayer = true; header.layer?.backgroundColor = EditorPalette.header.cgColor
-        let open = button("Open", symbol: "folder"); let arrow = button("", symbol: "chevron.down"); let new = button("", symbol: "doc.badge.plus"); new.toolTip = "New Tab"; new.setAccessibilityLabel("New Tab")
+        let open = button("Open", symbol: "folder"); let new = button("", symbol: "doc.badge.plus"); new.toolTip = "New Tab"; new.setAccessibilityLabel("New Tab")
         let save = button("Save", symbol: "square.and.arrow.down"); let menu = button("", symbol: "line.3.horizontal")
         let sidebarToggle = button("", symbol: "sidebar.left"); sidebarToggle.target = self; sidebarToggle.action = #selector(toggleWorkspaceSidebar); sidebarToggle.toolTip = "Show/Hide Sidebar"
-        let openGroup = NSStackView(views: [open, arrow]); openGroup.spacing = 0
-        let left = NSStackView(views: [openGroup, sidebarToggle, new]); left.spacing = 8
+        let left = NSStackView(views: [open, sidebarToggle, new]); left.spacing = 8
         let saveArrow = button("", symbol: "chevron.down"); saveArrow.toolTip = "Save options"; saveArrow.target = self; saveArrow.action = #selector(showSaveMenu(_:))
         let saveGroup = NSStackView(views: [save, saveArrow]); saveGroup.spacing = 0
         let right = NSStackView(views: [saveGroup, menu]); right.spacing = 12
@@ -108,7 +108,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextViewDelegate, NS
         tabItems.orientation = .horizontal; tabItems.spacing = 2; tabItems.alignment = .centerY
         tabScroll.documentView = tabItems; tabs.addSubview(tabScroll); tabScroll.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([tabScroll.leadingAnchor.constraint(equalTo: tabs.leadingAnchor), tabScroll.trailingAnchor.constraint(equalTo: tabs.trailingAnchor), tabScroll.topAnchor.constraint(equalTo: tabs.topAnchor), tabScroll.bottomAnchor.constraint(equalTo: tabs.bottomAnchor)])
-        open.target = self; open.action = #selector(showWorkspaceMenu(_:)); arrow.target = self; arrow.action = #selector(showWorkspaceMenu(_:))
+        open.target = self; open.action = #selector(showWorkspaceMenu(_:))
         new.target = self; new.action = #selector(newDocument); save.target = self; save.action = #selector(saveDocument)
         menu.target = self; menu.action = #selector(showAppMenu)
         let scroll = NSScrollView(); scroll.hasVerticalScroller = true; scroll.hasHorizontalScroller = true; scroll.autohidesScrollers = true; scroll.drawsBackground = true; scroll.backgroundColor = .white
@@ -219,7 +219,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextViewDelegate, NS
         appMenu.addItem(withTitle: "Restore Closed Tab…", action: #selector(restoreClosedTab), keyEquivalent: "").target = self
         let fileItem = NSMenuItem(title: "File", action: nil, keyEquivalent: ""); main.insertItem(fileItem, at: 1)
         let file = NSMenu(title: "File"); fileItem.submenu = file
-        for (title, action, key) in [("New File", #selector(newDocument), "n"), ("New Window", #selector(newWindow), ""), ("Open…", #selector(openDocuments), "o"), ("Save", #selector(saveDocument), "s"), ("Save As…", #selector(saveAsDocument), ""), ("Save All", #selector(saveAllDocuments), ""), ("Close File", #selector(closeActiveTab), "w"), ("Close Folder", #selector(closeFolder), "")] { let item = file.addItem(withTitle: title, action: action, keyEquivalent: key); item.target = self }
+        for (title, action, key) in [("New File", #selector(newDocument), "n"), ("New Folder…", #selector(newFolder), ""), ("New Window", #selector(newWindow), ""), ("Open…", #selector(openDocuments), "o"), ("Save", #selector(saveDocument), "s"), ("Save As…", #selector(saveAsDocument), ""), ("Save All", #selector(saveAllDocuments), ""), ("Close File", #selector(closeActiveTab), "w"), ("Close Folder", #selector(closeFolder), "")] { let item = file.addItem(withTitle: title, action: action, keyEquivalent: key); item.target = self }
         let recentItem = file.insertItem(withTitle: "Open Recent", action: nil, keyEquivalent: "", at: 3)
         let recent = NSMenu(); recent.delegate = self; fillRecentMenu(recent); recentItem.submenu = recent
         let find = edit.addItem(withTitle: "Find and Replace…", action: #selector(NSTextView.performFindPanelAction(_:)), keyEquivalent: "f"); find.tag = Int(NSFindPanelAction.showFindPanel.rawValue)

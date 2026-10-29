@@ -391,7 +391,7 @@ extension AppDelegate {
         let recent = NSMenu(); let recentItem = menu.addItem(withTitle: "Open Recent", action: nil, keyEquivalent: ""); recentItem.submenu = recent
         recent.delegate = self
         fillRecentMenu(recent)
-        for (title, action) in [("New File", #selector(newDocument)), ("New Window", #selector(newWindow)), ("Close File", #selector(closeActiveTab)), ("Close Folder", #selector(closeFolder))] {
+        for (title, action) in [("New File", #selector(newDocument)), ("New Folder…", #selector(newFolder)), ("New Window", #selector(newWindow)), ("Close File", #selector(closeActiveTab)), ("Close Folder", #selector(closeFolder))] {
             menu.addItem(withTitle: title, action: action, keyEquivalent: "").target = self
         }
         return menu

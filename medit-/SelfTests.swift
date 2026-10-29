@@ -330,8 +330,33 @@ func runSelfTests() {
         controller.chooseSaveLocation = { _ in nil }
         controller.saveAllDocuments()
         check(controller.editor.string == "cancelled draft" && controller.documents[controller.activeIndex].path == nil, "Cancelling Save All preserves unsaved draft")
+        let beforeCloseTests = controller.sessionSnapshot()
+        let oldPrompt = UserDefaults.standard.object(forKey: "promptOnClose")
+        defer { UserDefaults.standard.set(oldPrompt, forKey: "promptOnClose") }
+        UserDefaults.standard.set(false, forKey: "promptOnClose")
+        var closePrompts = 0
+        controller.chooseCloseResponse = { _ in closePrompts += 1; return .alertSecondButtonReturn }
+        let draftID = controller.documents[controller.activeIndex].id
+        controller.closeDocument(controller.activeIndex)
+        check(closePrompts == 1 && controller.documents.contains { $0.id == draftID }, "Cancel keeps an unnamed modified tab even with the old prompt preference off")
+        controller.chooseCloseResponse = { _ in .alertFirstButtonReturn }
+        controller.closeDocument(controller.activeIndex)
+        check(controller.documents.contains { $0.id == draftID }, "Cancelling the save dialog keeps a closing draft open")
+        let closingURL = folder.appendingPathComponent("saved-on-close.txt")
+        controller.chooseSaveLocation = { _ in closingURL }
+        controller.closeDocument(controller.activeIndex)
+        check(!controller.documents.contains { $0.id == draftID } && (try? String(contentsOf: closingURL)) == "cancelled draft", "Saving on close writes an unnamed draft before removing its tab")
+        controller.openFile(closingURL); controller.editor.string = "named edit"; controller.captureDocument()
+        controller.chooseCloseResponse = { _ in closePrompts += 1; return .alertSecondButtonReturn }
+        controller.closeDocument(controller.activeIndex)
+        check(closePrompts == 2 && controller.editor.string == "named edit", "Cancel preserves a named modified tab")
+        controller.chooseCloseResponse = { _ in .alertThirdButtonReturn }
+        controller.closeDocument(controller.activeIndex)
+        check((try? String(contentsOf: closingURL)) == "cancelled draft", "Keep Recovery closes without overwriting the named file")
+        controller.chooseCloseResponse = nil
+        controller.applySession(beforeCloseTests); controller.persistSession()
         let openTitles = controller.openMenu().items.map(\.title)
-        check(openTitles == ["Open…", "Open Recent", "New File", "New Window", "Close File", "Close Folder"], "Open dropdown has precisely the requested actions")
+        check(openTitles == ["Open…", "Open Recent", "New File", "New Folder…", "New Window", "Close File", "Close Folder"], "Open dropdown has precisely the requested actions")
         let isolatedLoose = FolderSessionStore(directory: controller.store.directory)
         isolatedLoose.looseDirectory = folder.appendingPathComponent("other-window-loose")
         try isolatedLoose.save(EditorSession(documents: [EditorDocument(title: "Other window", text: "independent")], activeIndex: 0))
