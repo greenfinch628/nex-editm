@@ -1,5 +1,7 @@
 # nex-editm - 0.3
 
+- 2026-10-29T16:44:21Z — Removed: Obsolete local app ZIP archives, development build products, caches, and build-time backups after validating the revised installed app. Retained one installed nex-editm app, source history, and user sessions. Latest functional validation: all 196 checks passed.
+
 - 2026-10-29T16:39:51Z — Fixed: Folder navigation and closing a folder preserve the current window position and size instead of restoring a folder-specific frame; startup still restores saved window geometry.
 
 - 2026-10-29T16:35:18Z — Changed: Double-clicking a sidebar folder enters it; disclosure arrows still expand contents. Added a Down arrow beside Up to enter a selected subfolder.
