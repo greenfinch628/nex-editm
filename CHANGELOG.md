@@ -1,5 +1,7 @@
 # nex-editm - 0.3
 
+- 2026-10-29T16:29:45Z — Added: Parent-folder Up arrow beside Refresh in the main editor sidebar, opening the parent folder with its files and expandable subfolders.
+
 - 2026-10-29T16:18:50Z — Added: Up arrow in the Open sidebar to browse the parent directory as a tree containing files and expandable subfolders. Sidebar files can be selected or opened directly.
 
 - 2026-10-29T16:05:41Z — Added: Folders-style Open window with expandable navigation, striped file details, history, parent navigation, clickable path, hidden files, Go to Folder, and folder creation.

@@ -125,6 +125,7 @@ final class FolderTitleField: NSTextField {
 
 final class FolderSidebarController: NSViewController, NSOutlineViewDataSource, NSOutlineViewDelegate {
     let outline = SidebarOutlineView()
+    let parentButton = NSButton()
     let gitStatus = GitStatusMonitor()
     let folderTitle = FolderTitleField(labelWithString: "Folder")
     let message = NSTextField(wrappingLabelWithString: "Choose Open… to open a folder")
@@ -134,10 +135,14 @@ final class FolderSidebarController: NSViewController, NSOutlineViewDataSource, 
     var onDeleteFile: ((URL) -> Void)?
     var onHide: (() -> Void)?
     var onCloseFolder: (() -> Void)?
+    var onOpenParent: ((URL) -> Void)?
     var interfaceFont = NSFont.systemFont(ofSize: 17) { didSet { if isViewLoaded { let saved = state(width: 240, hidden: false); folderTitle.font = interfaceFont; message.font = interfaceFont; outline.rowHeight = max(26, interfaceFont.pointSize + 10); setFolder(root?.url.path, state: saved) } } }
     private var refreshing = false
     override func loadView() {
         let host = NSView(); host.wantsLayer = true; host.layer?.backgroundColor = EditorPalette.workspaceSidebar.cgColor
+        parentButton.image = NSImage(systemSymbolName: "arrow.up", accessibilityDescription: "Open parent folder")
+        parentButton.isBordered = false; parentButton.target = self; parentButton.action = #selector(openParentFolder)
+        parentButton.toolTip = "Open parent folder"; parentButton.setAccessibilityLabel("Open parent folder")
         let refresh = NSButton(image: NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Refresh folder")!, target: self, action: #selector(refreshTree))
         refresh.isBordered = false; refresh.toolTip = "Refresh folder"
         let hide = NSButton(title: "×", target: self, action: #selector(hideSidebar))
@@ -165,9 +170,10 @@ final class FolderSidebarController: NSViewController, NSOutlineViewDataSource, 
         outline.rowHeight = 27; outline.indentationPerLevel = 15; outline.backgroundColor = EditorPalette.workspaceSidebar
         outline.selectionHighlightStyle = .regular; outline.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
         let scroll = NSScrollView(); scroll.documentView = outline; scroll.hasVerticalScroller = true; scroll.hasHorizontalScroller = false; scroll.autohidesScrollers = true; scroll.backgroundColor = EditorPalette.workspaceSidebar
-        [folderTitle, refresh, hide, scroll, message].forEach { host.addSubview($0); $0.translatesAutoresizingMaskIntoConstraints = false }
+        [folderTitle, parentButton, refresh, hide, scroll, message].forEach { host.addSubview($0); $0.translatesAutoresizingMaskIntoConstraints = false }
         NSLayoutConstraint.activate([
-            folderTitle.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 12), folderTitle.topAnchor.constraint(equalTo: host.topAnchor, constant: 12), folderTitle.trailingAnchor.constraint(equalTo: refresh.leadingAnchor, constant: -8),
+            folderTitle.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 12), folderTitle.topAnchor.constraint(equalTo: host.topAnchor, constant: 12), folderTitle.trailingAnchor.constraint(equalTo: parentButton.leadingAnchor, constant: -8),
+            parentButton.trailingAnchor.constraint(equalTo: refresh.leadingAnchor, constant: -4), parentButton.centerYAnchor.constraint(equalTo: folderTitle.centerYAnchor), parentButton.widthAnchor.constraint(equalToConstant: 24),
             refresh.trailingAnchor.constraint(equalTo: hide.leadingAnchor, constant: -4), hide.trailingAnchor.constraint(equalTo: host.trailingAnchor, constant: -10), hide.centerYAnchor.constraint(equalTo: refresh.centerYAnchor), hide.widthAnchor.constraint(equalToConstant: 24), refresh.centerYAnchor.constraint(equalTo: folderTitle.centerYAnchor), refresh.widthAnchor.constraint(equalToConstant: 24),
             scroll.topAnchor.constraint(equalTo: folderTitle.bottomAnchor, constant: 12), scroll.leadingAnchor.constraint(equalTo: host.leadingAnchor), scroll.trailingAnchor.constraint(equalTo: host.trailingAnchor), scroll.bottomAnchor.constraint(equalTo: message.topAnchor, constant: -8),
             message.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 12), message.trailingAnchor.constraint(equalTo: host.trailingAnchor, constant: -12), message.bottomAnchor.constraint(equalTo: host.bottomAnchor, constant: -10)
@@ -185,6 +191,10 @@ final class FolderSidebarController: NSViewController, NSOutlineViewDataSource, 
         item.target = self
         return menu
     }
+    @objc func openParentFolder() {
+        guard let root, root.url.path != "/" else { return }
+        onOpenParent?(root.url.deletingLastPathComponent())
+    }
     @objc func closeSidebarFolder() { guard root != nil else { return }; onCloseFolder?() }
     func reloadGitRows() {
         let rows = IndexSet(integersIn: 0..<outline.numberOfRows)
@@ -198,6 +208,7 @@ final class FolderSidebarController: NSViewController, NSOutlineViewDataSource, 
         root = path.map { FolderNode(url: URL(fileURLWithPath: $0).standardizedFileURL, directory: true) }
         folderTitle.stringValue = root?.url.lastPathComponent ?? "Folder"
         folderTitle.toolTip = path
+        parentButton.isEnabled = root != nil && root?.url.path != "/"
         message.stringValue = root == nil ? "Choose Open… to open a folder" : ""
         outline.reloadData()
         if let root {

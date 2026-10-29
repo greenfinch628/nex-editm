@@ -517,6 +517,19 @@ func runSelfTests() {
         check(browser.run().map(\.lastPathComponent) == ["sample.txt"], "Open returns the selected file")
         DispatchQueue.main.async { browser.cancel() }
         check(browser.run().isEmpty, "Cancel returns no files or folders")
+        controller.openFolder(browserChild)
+        let parentSidebar = controller.sidebarController
+        parentSidebar.parentButton.performClick(nil)
+        check(controller.workspace == browserRoot.path && parentSidebar.root?.url.path == browserRoot.path, "Main editor sidebar Up opens the parent folder")
+        check(parentSidebar.node(at: browserRoot.appendingPathComponent("sample.txt").path) != nil, "Main editor parent sidebar includes its files")
+        let nestedFolder = parentSidebar.node(at: browserChild.path)!
+        parentSidebar.outline.expandItem(nestedFolder)
+        let nestedFile = parentSidebar.node(at: browserChild.appendingPathComponent("nested.txt").path)!
+        check(parentSidebar.outline.row(forItem: nestedFile) >= 0, "Main editor parent sidebar expands subfolders to show their files")
+        parentSidebar.setFolder("/", state: nil)
+        check(!parentSidebar.parentButton.isEnabled, "Main editor sidebar Up is disabled at filesystem root")
+        parentSidebar.setFolder(nil, state: nil)
+        check(!parentSidebar.parentButton.isEnabled, "Main editor sidebar Up is disabled without an open folder")
         let iconURL = Bundle.main.url(forResource: "AppIcon", withExtension: "icns")
         check(iconURL.flatMap { NSImage(contentsOf: $0) }?.isValid == true, "Packaged application icon decodes correctly")
         print("\(checks) checks passed")

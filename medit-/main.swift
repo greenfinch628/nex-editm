@@ -137,6 +137,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextViewDelegate, NS
         let editorPane = NSView()
         [tabs, documentHost].forEach { editorPane.addSubview($0); $0.translatesAutoresizingMaskIntoConstraints = false }
         let editorController = NSViewController(); editorController.view = editorPane
+        sidebarController.onOpenParent = { [weak self] url in self?.openFolder(url) }
         sidebarController.onCloseFolder = { [weak self] in self?.closeFolder() }
         sidebarController.onHide = { [weak self] in self?.toggleWorkspaceSidebar() }
         sidebarController.onOpenFile = { [weak self] url in self?.openFile(url) }
