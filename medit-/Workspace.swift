@@ -585,12 +585,16 @@ final class OpenBrowserNode: NSObject {
     let title: String
     var children: [OpenBrowserNode]?
     init(_ url: URL, title: String? = nil) { self.url = url; self.title = title ?? url.lastPathComponent }
-    func folders() -> [OpenBrowserNode] {
-        if let children { return children }
-        let urls = (try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey], options: [.skipsHiddenFiles])) ?? []
-        // Symlink destinations can be visited, but are not expanded recursively.
-        let result = urls.filter { OpenBrowserModel.isFolder($0) }.sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }.map { OpenBrowserNode($0) }
-        children = result; return result
+    private var cachedHidden = false
+    func contents(showsHidden: Bool = false) -> [OpenBrowserNode] {
+        guard OpenBrowserModel.isFolder(url) else { return [] }
+        if let children, cachedHidden == showsHidden { return children }
+        let urls = (try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey], options: showsHidden ? [] : [.skipsHiddenFiles])) ?? []
+        let result = urls.sorted {
+            let a = OpenBrowserModel.isFolder($0), b = OpenBrowserModel.isFolder($1)
+            return a != b ? a : $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending
+        }.map { OpenBrowserNode($0) }
+        cachedHidden = showsHidden; children = result; return result
     }
 }
 
@@ -600,7 +604,8 @@ final class OpenBrowserController: NSWindowController, NSWindowDelegate, NSOutli
     let files = NSTableView()
     let path = NSPathControl()
     let location = NSTextField(labelWithString: "Home")
-    let back = NSButton(), forward = NSButton(), up = NSButton()
+    let back = NSButton(), forward = NSButton(), up = NSButton(), sidebarUp = NSButton()
+    let sidebarHeading = NSTextField(labelWithString: "★  Favorites")
     let openButton = NSButton(title: "Open", target: nil, action: nil)
     var result: [URL] = []
     private var roots: [OpenBrowserNode] = []
@@ -639,11 +644,13 @@ final class OpenBrowserController: NSWindowController, NSWindowDelegate, NSOutli
         let sidebar = NSView(); sidebar.wantsLayer = true; sidebar.layer?.backgroundColor = sidebarColor.cgColor
         let main = NSView()
         split.addArrangedSubview(sidebar); split.addArrangedSubview(main)
-        let favorites = NSTextField(labelWithString: "★  Favorites"); favorites.textColor = .secondaryLabelColor; favorites.font = .systemFont(ofSize: 13, weight: .semibold)
+        let favorites = sidebarHeading; favorites.textColor = .secondaryLabelColor; favorites.font = .systemFont(ofSize: 13, weight: .semibold)
         let column = NSTableColumn(identifier: .init("folder")); tree.addTableColumn(column); tree.outlineTableColumn = column
         tree.headerView = nil; tree.dataSource = self; tree.delegate = self; tree.rowHeight = 26; tree.indentationPerLevel = 15
         tree.backgroundColor = sidebarColor; tree.selectionHighlightStyle = .regular; tree.style = .plain
         tree.setAccessibilityLabel("Folder navigation")
+        tree.target = self; tree.doubleAction = #selector(activateSidebarFile)
+        symbolButton(sidebarUp, "arrow.up", "Show parent directory in sidebar", #selector(goUp))
         let treeScroll = NSScrollView(); treeScroll.documentView = tree; treeScroll.hasVerticalScroller = true; treeScroll.autohidesScrollers = true
         let home = FileManager.default.homeDirectoryForCurrentUser
         roots = [OpenBrowserNode(home, title: "Home"), OpenBrowserNode(URL(fileURLWithPath: "/"), title: "This Mac")]
@@ -676,12 +683,14 @@ final class OpenBrowserController: NSWindowController, NSWindowDelegate, NSOutli
         openButton.target = self; openButton.action = #selector(accept); openButton.bezelStyle = .rounded; openButton.keyEquivalent = "\r"
         let bottom = NSStackView(views: [hidden, NSView(), cancel, openButton]); bottom.spacing = 12
         func add(_ views: [NSView], to parent: NSView) { for v in views { parent.addSubview(v); v.translatesAutoresizingMaskIntoConstraints = false } }
-        add([split, bottom], to: host); add([favorites, treeScroll], to: sidebar); add([toolbar, fileScroll, path], to: main)
+        add([split, bottom], to: host); add([favorites, sidebarUp, treeScroll], to: sidebar); add([toolbar, fileScroll, path], to: main)
         NSLayoutConstraint.activate([
             split.leadingAnchor.constraint(equalTo: host.leadingAnchor), split.trailingAnchor.constraint(equalTo: host.trailingAnchor), split.topAnchor.constraint(equalTo: host.topAnchor), split.bottomAnchor.constraint(equalTo: bottom.topAnchor, constant: -8),
             bottom.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 16), bottom.trailingAnchor.constraint(equalTo: host.trailingAnchor, constant: -16), bottom.bottomAnchor.constraint(equalTo: host.bottomAnchor, constant: -12), bottom.heightAnchor.constraint(equalToConstant: 32),
             sidebar.widthAnchor.constraint(greaterThanOrEqualToConstant: 210), main.widthAnchor.constraint(greaterThanOrEqualToConstant: 500),
             favorites.topAnchor.constraint(equalTo: sidebar.topAnchor, constant: 15), favorites.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 20),
+            sidebarUp.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: -12), sidebarUp.centerYAnchor.constraint(equalTo: favorites.centerYAnchor), sidebarUp.widthAnchor.constraint(equalToConstant: 28),
+            favorites.trailingAnchor.constraint(lessThanOrEqualTo: sidebarUp.leadingAnchor, constant: -8),
             treeScroll.topAnchor.constraint(equalTo: favorites.bottomAnchor, constant: 10), treeScroll.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 6), treeScroll.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: -6), treeScroll.bottomAnchor.constraint(equalTo: sidebar.bottomAnchor),
             toolbar.topAnchor.constraint(equalTo: main.topAnchor, constant: 10), toolbar.leadingAnchor.constraint(equalTo: main.leadingAnchor, constant: 12), toolbar.trailingAnchor.constraint(equalTo: main.trailingAnchor, constant: -12), toolbar.heightAnchor.constraint(equalToConstant: 34),
             fileScroll.topAnchor.constraint(equalTo: toolbar.bottomAnchor, constant: 12), fileScroll.leadingAnchor.constraint(equalTo: main.leadingAnchor, constant: 8), fileScroll.trailingAnchor.constraint(equalTo: main.trailingAnchor, constant: -8), fileScroll.bottomAnchor.constraint(equalTo: path.topAnchor, constant: -6),
@@ -706,10 +715,15 @@ final class OpenBrowserController: NSWindowController, NSWindowDelegate, NSOutli
             return item
         }
         back.isEnabled = model.historyIndex > 0; forward.isEnabled = model.historyIndex + 1 < model.history.count
-        up.isEnabled = model.directory.path != "/"; openButton.title = "Open Folder"
+        up.isEnabled = model.directory.path != "/"; sidebarUp.isEnabled = up.isEnabled; openButton.title = "Open Folder"
         syncingTree = true
         if let node = findNode(model.directory) { tree.selectRowIndexes(IndexSet(integer: tree.row(forItem: node)), byExtendingSelection: false) }
-        else { tree.deselectAll(nil) }
+        else {
+            roots = [OpenBrowserNode(model.directory)]
+            sidebarHeading.stringValue = "Folder"
+            tree.reloadData(); tree.expandItem(roots[0])
+            tree.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        }
         syncingTree = false
     }
     private func findNode(_ url: URL) -> OpenBrowserNode? {
@@ -718,7 +732,7 @@ final class OpenBrowserController: NSWindowController, NSWindowDelegate, NSOutli
             let relative = url.pathComponents.dropFirst(root.url.pathComponents.count)
             for component in relative {
                 tree.expandItem(node)
-                guard let next = node.folders().first(where: { $0.url.lastPathComponent == component }) else { return nil }
+                guard let next = node.contents(showsHidden: model.showsHidden).first(where: { $0.url.lastPathComponent == component }) else { return nil }
                 node = next
             }
             return node
@@ -729,8 +743,26 @@ final class OpenBrowserController: NSWindowController, NSWindowDelegate, NSOutli
     func navigate(_ url: URL) { do { try model.navigate(url); refresh() } catch { showError(error) } }
     @objc func goBack() { do { try model.step(-1); refresh() } catch { showError(error) } }
     @objc func goForward() { do { try model.step(1); refresh() } catch { showError(error) } }
-    @objc func goUp() { navigate(model.directory.deletingLastPathComponent()) }
-    @objc func toggleHidden(_ sender: NSButton) { model.showsHidden = sender.state == .on; navigate(model.directory) }
+    @objc func goUp() {
+        guard model.directory.path != "/" else { return }
+        do {
+            try model.navigate(model.directory.deletingLastPathComponent())
+            syncingTree = true
+            roots = [OpenBrowserNode(model.directory, title: model.directory.path == "/" ? "This Mac" : model.directory.lastPathComponent)]
+            sidebarHeading.stringValue = "Folder"
+            tree.reloadData(); tree.expandItem(roots[0])
+            syncingTree = false
+            refresh()
+        } catch { showError(error) }
+    }
+    @objc func toggleHidden(_ sender: NSButton) {
+        model.showsHidden = sender.state == .on
+        syncingTree = true
+        tree.reloadData()
+        for root in roots { tree.expandItem(root) }
+        syncingTree = false
+        navigate(model.directory)
+    }
     @objc func choosePath() { if let url = path.clickedPathItem?.url { navigate(url) } }
     @objc func goToFolder() {
         let alert = NSAlert(); alert.messageText = "Go to Folder"; alert.addButton(withTitle: "Go"); alert.addButton(withTitle: "Cancel")
@@ -787,17 +819,38 @@ final class OpenBrowserController: NSWindowController, NSWindowDelegate, NSOutli
         }
     }
     func tableViewSelectionDidChange(_ notification: Notification) { openButton.title = files.selectedRowIndexes.isEmpty ? "Open Folder" : "Open" }
-    func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int { (item as? OpenBrowserNode)?.folders().count ?? roots.count }
-    func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any { (item as? OpenBrowserNode)?.folders()[index] ?? roots[index] }
+    func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int { (item as? OpenBrowserNode)?.contents(showsHidden: model.showsHidden).count ?? roots.count }
+    func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any { (item as? OpenBrowserNode)?.contents(showsHidden: model.showsHidden)[index] ?? roots[index] }
     func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
         guard let node = item as? OpenBrowserNode else { return false }
-        return (try? node.url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true && !node.folders().isEmpty
+        return OpenBrowserModel.isFolder(node.url) && (try? node.url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true && !node.contents(showsHidden: model.showsHidden).isEmpty
     }
     func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
         guard let node = item as? OpenBrowserNode else { return nil }
-        return cell(node.title, icon: folderIcon(node.url.path == FileManager.default.homeDirectoryForCurrentUser.path ? "house.fill" : "folder"))
+        return cell(node.title, icon: OpenBrowserModel.isFolder(node.url) ? folderIcon(node.url.path == FileManager.default.homeDirectoryForCurrentUser.path ? "house.fill" : "folder") : NSImage(systemSymbolName: "doc", accessibilityDescription: nil))
     }
     func outlineViewSelectionDidChange(_ notification: Notification) {
-        guard !syncingTree, let node = tree.item(atRow: tree.selectedRow) as? OpenBrowserNode else { return }; navigate(node.url)
+        guard !syncingTree, let node = tree.item(atRow: tree.selectedRow) as? OpenBrowserNode else { return }
+        selectSidebarNode(node)
+    }
+    func selectSidebarNode(_ node: OpenBrowserNode) {
+        if OpenBrowserModel.isFolder(node.url) { navigate(node.url); return }
+        do {
+            try model.navigate(node.url.deletingLastPathComponent())
+            refresh()
+            if let row = model.entries.firstIndex(where: { $0.path == node.url.path }) {
+                files.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+                files.scrollRowToVisible(row)
+            }
+            syncingTree = true
+            if let current = findNode(node.url), tree.row(forItem: current) >= 0 {
+                tree.selectRowIndexes(IndexSet(integer: tree.row(forItem: current)), byExtendingSelection: false)
+            }
+            syncingTree = false
+        } catch { showError(error) }
+    }
+    @objc func activateSidebarFile() {
+        guard let node = tree.item(atRow: tree.clickedRow) as? OpenBrowserNode, !OpenBrowserModel.isFolder(node.url) else { return }
+        finish([node.url])
     }
 }

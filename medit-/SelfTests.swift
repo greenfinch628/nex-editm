@@ -487,6 +487,25 @@ func runSelfTests() {
             view.cacheDisplay(in: view.bounds, to: bitmap)
             try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "/tmp/nex-open-browser-preview.png"))
         }
+        try "nested".write(to: browserChild.appendingPathComponent("nested.txt"), atomically: true, encoding: .utf8)
+        browser.navigate(browserChild)
+        browser.sidebarUp.performClick(nil)
+        check(browser.model.directory.path == browserRoot.path && (browser.tree.item(atRow: 0) as? OpenBrowserNode)?.url.path == browserRoot.path, "Sidebar Up navigates to the parent and makes it the visible tree root")
+        let parentNode = browser.tree.item(atRow: 0) as! OpenBrowserNode
+        let parentContents = parentNode.contents()
+        check(parentContents.contains { $0.url.lastPathComponent == "sample.txt" } && parentContents.contains { $0.url.lastPathComponent == "Child" }, "Parent sidebar displays both files and subfolders")
+        let childNode = parentContents.first { $0.url.lastPathComponent == "Child" }!
+        browser.tree.expandItem(childNode)
+        let nestedNode = childNode.contents().first { $0.url.lastPathComponent == "nested.txt" }!
+        check(browser.tree.row(forItem: nestedNode) >= 0, "Expanding a sidebar subfolder displays its files")
+        if let view = browser.window?.contentView, let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+            view.layoutSubtreeIfNeeded(); view.cacheDisplay(in: view.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "/tmp/nex-sidebar-up-preview.png"))
+        }
+        browser.selectSidebarNode(nestedNode)
+        check(browser.model.directory.path == browserChild.path && browser.files.selectedRow >= 0 && browser.model.entries[browser.files.selectedRow].lastPathComponent == "nested.txt", "Selecting a sidebar file selects it for opening")
+        browser.navigate(URL(fileURLWithPath: "/"))
+        check(!browser.sidebarUp.isEnabled, "Sidebar Up is disabled at the filesystem root")
         browser.window?.orderOut(nil)
         browser.navigate(browserRoot)
         DispatchQueue.main.async { browser.accept() }
