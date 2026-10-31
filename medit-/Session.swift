@@ -315,6 +315,8 @@ extension AppDelegate {
     }
     @objc func showAbout() {
         var options: [NSApplication.AboutPanelOptionKey: Any] = [.applicationName: "nex-editm"]
+        if let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String { options[.applicationVersion] = version }
+        if let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String { options[.version] = build }
         if let url = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"), let icon = NSImage(contentsOf: url) { options[.applicationIcon] = icon }
         NSApp.orderFrontStandardAboutPanel(options: options)
     }
